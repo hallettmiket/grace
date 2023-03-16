@@ -1,0 +1,667 @@
+---
+title: "Explore the Macrophage FCOS classifier"
+output: html_notebook
+---
+
+```{r setup, include=FALSE, results='hide'}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn = -1)
+root <- rprojroot::find_root(".git/index"); 
+source(file.path(root, "src", "grace", "init.R"))
+library(ggrepel)
+```
+
+We begin by loading the metadata associatedd with the optimal clasifier as determined in experiment 1.
+
+```{r}
+GRACE <- "/home/data/refined/candescence/performance/grace_macro"
+numba = "biglittlelittle"
+exp = "biglittlelittle" 
+threshold = 0.2
+important <- c("0", "1", "2", "3", "UFO", "macrophage")
+```
+
+```{r}
+# fnames <- list.files(GRACE, pattern = "test_events_results_*")
+# data <- lapply(fnames, FUN=function(x) { return( read_csv(file.path(GRACE, x)))}) %>% 
+#         bind_rows(.id = "column_label") 
+# data <- data[, -c(1,2)]
+# data <- data %>% select(-"index")
+# data$type<- "macro"
+# tmp_<- str_split(data$filename, pattern="_", simplify=TRUE)
+# data$replicate <-as.integer(str_split(tmp_[,2], pattern="[A-Z]+", simplify=TRUE)[,2])
+# data$plate <- as.integer(str_split(tmp_[,3], pattern="[A-Z]+", simplify=TRUE)[,2])
+# data$position<-tmp_[,4]
+# 
+# data <- data %>% separate( col=position, into=c("row", "column"), sep=1 )
+# 
+# data <- data %>% relocate(event, experiment, type, threshold, gt_class, dt_class, 
+#                              plate, row, column,replicate, bbox_1, bbox_2, bbox_3, bbox_4)
+# 
+# data <- data %>% mutate( area = (bbox_3 - bbox_1)*(bbox_4 - bbox_2))
+# print(data)
+# write_csv(data, file.path(GRACE,   
+#                                  paste0("complete_test_events_", 
+#                                  numba, "_thresh_", threshold, ".csv")))
+#saveRDS(data, file.path(GRACE, paste0("complete_test_events_", 
+#                                  numba, "_thresh_", threshold, ".Rds")))
+#filename2prcr <- data %>% select(filename, plate, row, column, replicate) %>% distinct
+```
+
+
+
+```{r}
+data <- readRDS(file.path(GRACE, paste0("complete_test_events_", 
+                                  numba, "_thresh_", threshold, ".Rds")))
+filename2prcr <- data %>% select(filename, plate, row, column, replicate) %>% distinct
+```
+
+
+For visualization, we create succinct names based on their gene names. First we set NA gene names to the feature name in grace. Then we join with the data table.
+```{r}
+grace$name <- ifelse(is.na(grace$common), grace$feature_name, grace$common)
+grace$name <- ifelse(is.na(grace$name), 
+                     ifelse(!is.na(grace$orf), paste0("control_", grace$orf), paste0("control_", grace$description)),
+                     grace$name)
+grace <- grace %>% relocate(name)
+grace_lite <- grace %>% select( name, plate, row, column )
+data_full <- data %>% left_join(grace_lite, by=c("plate", "row", "column")) %>% relocate(name) 
+data <- data_full
+
+```
+
+
+Now we perform some due diligence to make sure everything is ok.
+
+Question. Are there examples of objects in the data tibble from every row of grace (N=3,351)? Yes
+
+```{r}
+tmp_g <- grace_lite %>% select(plate, row, column) %>% distinct %>% arrange(plate, row, column)
+tmp_d <- data %>% select(plate, row, column) %>% distinct %>% arrange(plate, row, column)
+
+for (ii in 1:nrow(tmp_g)) {
+    xx <- tmp_d %>% filter(plate==tmp_g$plate[ii], row==tmp_g$row[ii], column==tmp_g$column[ii])
+    if (nrow(xx)==0) { print(as.character(tmp_g[ii,]))}
+
+}
+# empty
+```
+So every entry of grade is in the data tibble. Good.
+
+Question. Which coordinates (combinations of plate, row, column) are missing a replicate in the data tibble? Some are....
+
+```{r}
+tmp_d <- data %>% select(plate, row, column, replicate) %>% distinct %>% arrange(plate, row, column, replicate) %>%
+    group_by(plate, row, column) %>% summarize(n=n())
+tmp_dd <- tmp_d %>% filter( n < 2 )
+
+```
+So there are 111 instances where only one replicate is present. This is often on plate 6 where perahps all are missing. Plate 2 is missing about 5. Plate 19 missing 1. Plate 22 missies 3. Plate 34 mising 3. Plate 35 misses 2. 
+
+Question. Are there images for these missing replicates in the test image directory? Or are they missing? Answer: some.
+
+```{r}
+fs_test <- list.files("/home/data/refined/candescence/train-data/grace_macro/test")
+
+split_test <- tibble(.rows=length(fs_test))
+tmp_<- str_split(fs_test, pattern="_", simplify=TRUE)
+split_test$replicate <-as.integer(str_split(tmp_[,2], pattern="[A-Z]+", simplify=TRUE)[,2])
+split_test$plate <- as.integer(str_split(tmp_[,3], pattern="[A-Z]+", simplify=TRUE)[,2])
+split_test$position<-tmp_[,4]
+split_test <- split_test %>% separate( col=position, into=c("row", "column"), sep=1 ) %>% distinct %>% 
+    arrange(plate, row, column, replicate)
+
+for (ii in 1:nrow(tmp_dd)){
+    xx <- split_test %>% filter(plate==tmp_dd$plate[ii], row==tmp_dd$row[ii], column==tmp_dd$column[ii])
+    if (nrow(xx)==0) {
+        print( "\n Missing ", ii, " ", as.character(tmp_dd[ii, ]))
+    } else if (nrow(xx)==1) {
+        print("\n just one is here")
+        print(ii)
+    } else if (nrow(xx)==2) {
+      #  print("\n Both are here "); print( ii)
+    }
+}
+```
+Five on plate 2 have both images and one on plate 19 has both images. The rest are missing a second replicate. This includes plate 6 hat is missing replicates for all images.
+
+Question. Are there any images in the data tibble that aren't in GRACE? Yes there are several in data and not in GRACE. 
+
+
+```{r}
+for (ii in 1:nrow(tmp_d)) {
+    xx <- tmp_g %>% filter(plate==tmp_d$plate[ii], row==tmp_d$row[ii], column==tmp_d$column[ii])
+    if (nrow(xx)==0) { print(as.character(tmp_d[ii,]))
+        }
+
+}
+```
+The majority are plate 35 in row H. Notice that all have 2 replicates. These should all be removed.
+
+Sumamary. For the macro images, there are about 120  images missing. All GRACE strains have at least one image however. There are three GRACE strains that were removed in the final manuscript. There are 9 strains present in data that aren't present in GRACE.
+
+
+## Remove blacklisted from the data tibble
+
+```{r}
+data_white <- data %>% filter(!(plate=="20" & row=="F" & column=="10")) %>%
+             filter(!(plate=="35" & row=="H" & column %in% c("5", "6", "7", "8", "9", "10", "11", "12"))) %>%
+             filter(!(name %in% c("control_unknown", "control_YPD+NAT", "control_YPD", "control_ATCC90030", "control_WO1")))
+
+```
+
+```{r}
+saveRDS(data_white, file.path(GRACE, paste0("journal_version_before_summary_whitelisted_macro_", 
+                                  numba, "_thresh_", threshold, ".Rds")))
+```
+
+## Build summaries
+
+We next build summaries of each individual image. For this we will only consider the so-called
+``important'' classes.
+
+```{r}
+data_white <- data_white %>% ungroup
+img_summary <- data_white %>% filter(dt_class %in% important) %>%
+  group_by(filename, dt_class) %>% select(-c(threshold, type, gt_class)) %>% dplyr::summarise( n_objects_class = n() )
+                                                                                               
+tmp <- data_white %>% select(name, filename) %>% distinct
+img_summary <- img_summary %>% left_join(tmp, by="filename") %>% relocate(name)
+```
+
+```{r}
+#  dplyr::summarise( n=n(), A_mean = mean(area), A_med=median(area), A_min=min(area), A_max=max(area))
+img_summary <- img_summary %>% ungroup %>% group_by(filename) %>%
+    mutate(n_objects = sum(n_objects_class))
+
+img_summary<- img_summary %>% mutate(freq=n_objects_class / n_objects ) %>% relocate(name, dt_class, n_objects_class, freq, n_objects)
+print(img_summary)
+```
+
+```{r}
+saveRDS(img_summary, file.path(GRACE, paste0("journal_version_summary_whitelisted_tc_", 
+                                  numba, "_thresh_", threshold, ".Rds")))
+```
+
+
+
+
+```{r}
+link_2_filename <- data_white %>% select(filename, plate, row, column, replicate) %>% distinct
+```
+
+
+Now we have to touch up the img_summary tibble to pivot wider and get the final version ready.
+
+```{r}
+img_summary_2 <- img_summary  %>% select(name, filename, n_objects, n_objects_class, dt_class ) %>%
+  pivot_wider(names_from=dt_class, values_from=n_objects_class) 
+img_summary_2 <- img_summary_2 %>% mutate( across(c(`0`, `1`,  `2`, "macrophage", `3`, "UFO"), replace_na, 0) ) 
+img_summary_2 <- img_summary_2 %>%  select(-UFO) %>% 
+            rename(macro_a_0=`0`, macro_a_1=`1`, macro_a_2=`2`, macro_a_3=`3`, macro_a_uninfected=`macrophage`) 
+
+img_summary_2 <- img_summary_2 %>%
+            mutate(n_objects=sum(macro_a_0, macro_a_1, macro_a_2, macro_a_3, macro_a_uninfected))
+# this is necessary to remove the UFOs from the counts.
+
+# now add relative frequencies
+img_summary_3 <- img_summary_2 %>%
+            mutate(
+                macro_f_0=macro_a_0/n_objects,
+                macro_f_1=macro_a_1/n_objects,
+                macro_f_2=macro_a_2/n_objects,
+                macro_f_3=macro_a_3/n_objects,
+                macro_f_uninfected=macro_a_uninfected/n_objects
+            )
+
+```
+
+```{r}
+img_summary_4 <- img_summary_3 %>% left_join(link_2_filename, by=c("filename") )
+img_summary_5 <- img_summary_4 %>% left_join(grace, by=c("plate", "row", "column"))
+img_summary_5 <- img_summary_5 %>% select(-name.y) %>% rename(name=`name.x`)
+img_summary_6 <- img_summary_5 %>% relocate( name, common, orf, plate, row, column, replicate, feature_name, description )
+img_summary_6 <- img_summary_6 %>% arrange(plate, row, column, replicate)
+```
+
+Clean up the rep1 macro and TC manual scores.
+```{r}
+img_summary_7 <- img_summary_6
+img_summary_7$macro_manual_score <- ifelse(img_summary_7$replicate==1, img_summary_7$rep1_macro, img_summary_7$rep2_macro)
+img_summary_7$tc_manual_score <- ifelse(img_summary_7$replicate==1, img_summary_7$rep1_TC, img_summary_7$rep2_TC)
+img_summary_7 <- img_summary_7 %>% relocate( name, common, orf, plate, row, column, replicate, macro_manual_score, tc_manual_score) 
+```
+
+
+```{r}
+saveRDS(img_summary_7, file.path(GRACE, paste0("journal_version_COMPLETE_macro_", 
+                                  numba, "_thresh_", threshold, ".Rds")) )
+
+```
+
+
+
+```{r}
+img_summary_7 <- img_summary_7 %>% ungroup
+tmp <- img_summary_7 %>% select(plate, row, column) %>% distinct
+```
+
+
+```{r}
+coords <- img_summary_7 %>% select(plate, row, column) %>% distinct
+img_summary_8_1 <- img_summary_7 %>% filter(replicate==1)
+img_summary_8_2 <- img_summary_7 %>% filter(replicate==2)
+
+coords_1 <- img_summary_8_1 %>% select(plate, row, column) %>% distinct
+coords_2 <- img_summary_8_2 %>% select(plate, row, column) %>% distinct
+```
+
+```{r}
+# are there any weird cases where replicate #2 is present but not replicate #1? Yes, 253, 1653, ... 
+for (ii in 1:nrow(coords_2)) {
+    xx <- coords_1 %>%  filter(plate==coords_2$plate[ii], row==coords_2$row[ii], column==coords_2$column[ii])
+    if (nrow(xx)==0) {
+        print(ii)
+    }
+}
+```
+
+```{r}
+strain_summary <- img_summary_8_1 %>% filter(FALSE)
+strain_summary$macro_manual_non_fil <- NA
+strain_summary$macro_ave_n_objects <- NA
+strain_summary$macro_tot_n_objects <- NA
+strain_summary$macro_ave_non_fil_freq <- NA
+strain_summary$macro_manual_gde <- FALSE
+
+for (ii in 1:nrow(coords)) {
+    xx_1 <- img_summary_8_1 %>% filter(plate==coords$plate[ii], row==coords$row[ii], column==coords$column[ii])
+    xx_2 <- img_summary_8_2 %>% filter(plate==coords$plate[ii], row==coords$row[ii], column==coords$column[ii])
+    
+    if (nrow(xx_1)==0) {  # xx_2 must be > 0
+         xx <- xx_2;  xx$macro_manual_non_fil <- NA; xx$macro_ave_n_objects <- NA; xx$macro_ave_non_fil_freq <- NA
+         xx$macro_tot_n_objects <- NA; xx$macro_manual_gde <- FALSE
+         
+         if ((!is.na(xx_2$macro_manual_score)) & (xx_2$macro_manual_score %in% c("E", "GD"))) {
+             xx$macro_manual_gde <- TRUE
+         }
+         
+         xx$macro_manual_non_fil[1] <- ifelse((!is.na(xx_2$macro_manual_score[1]) & 
+                                                     xx_2$macro_manual_score[1] %in% c("0", "1")), TRUE, FALSE)
+         if ((is.na(xx$n_objects[1])) | (xx$n_objects[1]==0)) {
+             xx$macro_ave_n_objects[1] <- xx$macro_tot_n_objects[1] <- 0
+             xx$macro_ave_non_fil_freq[1] <- 0
+         } else { 
+             tot_non_fil <- sum(xx$macro_a_0[1], xx$macro_a_1[1], na.rm=TRUE)
+             tot_fil <- sum(xx$macro_a_2[1], xx$macro_a_3[1], na.rm=TRUE)
+             xx$macro_ave_n_objects[1] <- xx$macro_tot_n_objects[1] <- (xx$n_objects[1] - xx$macro_a_uninfected[1])
+             xx$macro_ave_non_fil_freq[1] <- tot_non_fil/(tot_non_fil + tot_fil)
+             }
+    } else if (nrow(xx_2)==0) {
+         xx <- xx_1;         xx$macro_manual_non_fil<- NA; xx$macro_ave_n_objects <- NA; 
+         xx$macro_tot_n_objects <- NA;  xx$macro_ave_non_fil_freq <- NA; xx$macro_manual_gde <- FALSE
+
+         if ((!is.na(xx_1$macro_manual_score)) & (xx_1$macro_manual_score %in% c("E", "GD"))) {
+             xx$macro_manual_gde <- TRUE
+         }
+        
+         xx$macro_manual_non_fil[1] <- ifelse((!is.na(xx_1$macro_manual_score[1]) & 
+                                                     xx_1$macro_manual_score[1] %in% c("0", "1")), TRUE, FALSE)
+         if ((is.na(xx$n_objects[1])) | (xx$n_objects[1]==0)) {
+             xx$macro_ave_n_objects[1] <- xx$macro_tot_n_objects[1] <- 0
+             xx$macro_ave_non_fil_freq[1] <- 0
+         } else { 
+             tot_non_fil <- sum(xx$macro_a_0[1], xx$macro_a_1[1], na.rm=TRUE)
+             tot_fil <- sum(xx$macro_a_2[1], xx$macro_a_3[1], na.rm=TRUE)
+             xx$macro_ave_n_objects[1] <- xx$macro_tot_n_objects[1] <- (xx$n_objects[1] - xx$macro_a_uninfected[1])
+             xx$macro_ave_non_fil_freq[1] <- tot_non_fil/(tot_non_fil + tot_fil)
+             }
+    } else {
+        xx <- xx_1
+        xx$macro_manual_non_fil <- NA; xx$macro_ave_n_objects <- xx$macro_tot_n_objects <- NA;  xx$macro_ave_non_fil_freq <- NA
+        xx$macro_manual_gde <- FALSE
+        
+        if ((!is.na(xx_1$macro_manual_score)) & (!is.na(xx_2$macro_manual_score)) & 
+            (xx_1$macro_manual_score %in% c("E", "GD")) &  (xx_2$macro_manual_score %in% c("E", "GD")) ){
+             xx$macro_manual_gde <- TRUE
+         }
+        
+        xx$macro_manual_non_fil[1] <- ifelse(((!is.na(xx_1$macro_manual_score[1])) & (!is.na(xx_2$macro_manual_score[1])) &
+                                                     xx_1$macro_manual_score[1] %in% c("0", "1") &
+                                                     xx_2$macro_manual_score[1] %in% c("0", "1")), 
+                                                TRUE, FALSE)
+        tmp1 <- ifelse(is.na(xx_1$n_objects[1]), 0, xx_1$n_objects[1] - xx_1$macro_a_uninfected[1])
+        tmp2 <- ifelse(is.na(xx_2$n_objects[1]), 0, xx_2$n_objects[1] - xx_2$macro_a_uninfected[1])
+        xx$macro_ave_n_objects[1] <- (tmp1+tmp2)/2
+        xx$macro_tot_n_objects[1] <- tmp1 + tmp2
+        if (xx$macro_ave_n_objects[1]==0) { xx$macro_ave_non_fil_freq[1] <- 0 
+        } else {
+            xx$macro_ave_non_fil_freq[1] <- sum(xx_1$macro_a_0[1], xx_1$macro_a_1[1], 
+                                      xx_2$macro_a_0[1], xx_2$macro_a_1[1],na.rm=TRUE) / sum(
+                                            xx_1$macro_a_0[1], xx_1$macro_a_1[1], xx_1$macro_a_2[1], xx_1$macro_a_3[1],
+                                            xx_2$macro_a_0[1], xx_2$macro_a_1[1], xx_2$macro_a_2[1], xx_2$macro_a_3[1],
+                                            na.rm=TRUE
+                                      )
+        }
+    }
+    strain_summary <- strain_summary %>% add_row(xx)
+}
+strain_summary <- strain_summary %>% relocate(name, common, orf, plate, row, column, macro_manual_non_fil, macro_ave_n_objects, macro_tot_n_objects, macro_ave_non_fil_freq) %>%
+        select(-replicate, -filename, -macro_manual_score, -n_objects)
+```
+
+Color each strain
+```{r}
+strain_summary$color <- ""
+strain_summary$color <- ifelse(strain_summary$orf %in% c("SC5314", "CaSS1", "WO1", "ATCC90030"), "wildtype", strain_summary$color)
+strain_summary$color[str_starts(strain_summary$description, "CaLC3365")] <- "wildtype"
+strain_summary$color[str_starts(strain_summary$description, "CaLC6106")] <- "wildtype"
+strain_summary$color <- ifelse(strain_summary$macro_manual_non_fil, "manual_hit", strain_summary$color)
+strain_summary$color <- ifelse(strain_summary$macro_manual_non_fil, "manual_hit", strain_summary$color)
+strain_summary$color[str_starts(strain_summary$name, "control_Empty")] <- "control"
+strain_summary$color[str_starts(strain_summary$name, "control_tet")] <- "control"
+strain_summary$color <- ifelse(strain_summary$macro_manual_gde, "growth_defect", strain_summary$color)
+
+strain_summary$color <- as.factor(strain_summary$color)
+
+```
+
+
+```{r}
+saveRDS(strain_summary, file.path(GRACE, paste0("journal_version_STRAIN_COMPLETE_macro_", 
+                                  numba, "_thresh_", threshold, ".Rds")) )
+
+```
+
+Calculate vertical line as right boudning the top  5% of fraction non-filamentous.
+
+```{r}
+good <- strain_summary %>% filter(!macro_manual_gde)
+qh <- quantile(good$macro_ave_non_fil_freq, 0.90, na.rm=TRUE) %>% unname
+
+```
+
+Calculate horizontal line as upperbounding 95% of growth defects.
+
+```{r}
+gds <- strain_summary %>% filter(macro_manual_gde)
+qv <- quantile(gds$macro_ave_n_objects, 0.95, na.rm=TRUE) %>% unname
+
+```
+
+This is used to generate Figure 1B.
+```{r}
+scatter_dist <- ggplot(strain_summary, 
+        aes(x=macro_ave_non_fil_freq, y=macro_ave_n_objects, color=color)) + 
+  geom_point( size=0.2) +
+  geom_hline(yintercept=qv)  + 
+  scale_color_manual(values=c("wildtype"="blue", "manual_hit"="red", "x"="lightgrey", "control"="black", "growth_defect"="purple")) +
+  geom_vline(xintercept=qh) +
+    # theme_minimal() +
+    theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())  +
+  # scale_color_gradient2(midpoint=0, low="blue", mid="white",
+  #                    high="red", space ="Lab", limits = c(min(no_E$dist),2) ) +
+  labs(
+       x="Average fraction of non-filamentous to infected cells", y = "Average number of infected cells in images")
+
+
+pdf(
+        file.path(
+                GRACE, paste0("journal_version_FIGURE_1B_macro.pdf")
+            ),
+        height = 4,
+        width = 6
+        )
+    scatter_dist
+dev.off()
+
+```
+
+
+List Candescence hits. This is used to generate Table 1A.
+
+```{r}
+candi_hits <- strain_summary %>% filter(macro_ave_non_fil_freq > qh, macro_ave_n_objects > qv, !macro_manual_non_fil )
+write_csv(candi_hits, file.path( GRACE, "journal_version_TABLE_1A_CANDI_HITS_macro.csv"))
+
+candi_nikki_hits <- strain_summary %>% filter(macro_ave_non_fil_freq > qh, macro_ave_n_objects > qv, macro_manual_non_fil)
+write_csv(candi_nikki_hits, file.path( GRACE, "journal_version_TABLE_1A_CANDI_NIKKI_HITS_macro.csv"))
+
+nikki_hits <- strain_summary %>% filter(macro_manual_non_fil & ((macro_ave_non_fil_freq < qh) | (macro_ave_n_objects < qv)))
+write_csv(nikki_hits, file.path( GRACE, "journal_version_TABLE_1A_NIKKI_HITS_macro.csv"))
+
+```
+
+Now generate the Venn diagram of Figure 1C.
+
+```{r}
+library(ggvenn)
+AA <- list( Candescence = union(candi_hits$orf, candi_nikki_hits$orf),
+            Manual = union(nikki_hits$orf, candi_nikki_hits$orf) )
+
+
+pdf(
+        file.path(
+                GRACE, paste0("journal_version_FIGURE_1C_macro.pdf")
+            ),
+        height = 4,
+        width = 6
+        )
+    ggvenn(AA, show_elements=FALSE, columns=c("Candescence", "Manual"), fill_color=c("blue", "green"), stroke_color="white", stroke_alpha=0.1)
+
+dev.off()
+
+```
+
+Question 1. Is the overlap between Nikki and Candescence significant for the macrophage predictor? Yes, highly sig.
+```{r}
+manual <- union(nikki_hits$orf, candi_nikki_hits$orf) # N=193
+candi_tot <- union(candi_hits$orf, candi_nikki_hits$orf) # 251
+
+m <- length(manual) # number of nikki hits N=192 black balls
+n <- nrow(strain_summary) - length(manual)  # white balls N= 3332 - 192 = 3140
+k <- length(candi_tot) # 247
+q <- length(candi_nikki_hits$orf) # 83
+1 - phyper(84, m, n, k) # it's all zeros baby
+
+```
+
+----------
+
+Now we do some GO analyses.
+
+```{r}
+nikki_hits <- add_row(nikki_hits, candi_nikki_hits)
+candi_hits <- add_row(candi_hits, candi_nikki_hits)
+```
+
+```{r}
+genesl <- list( unique(nikki_hits$name), unique(candi_hits$name) )
+names(genesl) <- c("Manual", "Candescence")
+bckg <- strain_summary$name
+
+```
+
+```{r setup, include=FALSE, results='hide'}
+library(here)
+set.seed(321)
+library(ViSEAGO)
+library(ggplot2)
+library(LaCroixColoR)
+#scvi.pth <- here("data", "data03-scvi")
+#source(here("src", "utils.R"))
+```
+
+```{r}
+Custom<-ViSEAGO::Custom2GO(file.path("/home/data/refined/candescence/grace","ca.goa.txt"))
+myGENE2GO<-ViSEAGO::annotate(
+    "237561",
+    Custom
+)
+```
+
+```{r}
+goterms <- lapply(genesl, function(x){
+  BP.markers<-ViSEAGO::create_topGOdata(
+    geneSel = x, 
+    allGenes = bckg,
+    gene2GO=myGENE2GO, 
+    ont="BP",
+    nodeSize=5
+  )
+  
+  weight01.BP.markers<-topGO::runTest(
+      BP.markers,
+      statistic = "fisher"
+  )
+  return(list(bp=BP.markers, weight01.bp = weight01.BP.markers))
+})
+```
+
+```{r}
+manual_bp <- goterms$Manual$bp
+manual_weight <- goterms$Manual$weight01.bp
+candescence_bp <- goterms$Candescence$bp
+candescence_weight <- goterms$Candescence$weight01.bp
+
+BP_sResults<-ViSEAGO::merge_enrich_terms(
+    cutoff=0.01,
+    Input=list(
+      beta_manual=c(
+        "manual_bp",
+        "manual_weight"
+        ),
+      beta_candescence=c(
+          "candescence_bp",
+          "candescence_weight"
+        )
+    )
+)
+```
+
+```{r}
+myGOs<-ViSEAGO::build_GO_SS(
+    gene2GO=myGENE2GO,
+    enrich_GO_terms=BP_sResults
+)
+```
+```{r}
+myGOs<-ViSEAGO::compute_SS_distances(
+    myGOs,
+    distance="Wang"
+)
+```
+```{r}
+clusters_wardD2<-ViSEAGO::GOterms_heatmap(
+    myGOs,
+    showIC=FALSE,
+    showGOlabels =TRUE,
+    heatmap_colors = c("#FFFFFF","#56154D"),
+    GO.tree=list(
+        tree=list(
+            distance="Wang",
+            aggreg.method="ward.D2"
+        ),
+        cut=list(
+            dynamic=list(
+                pamStage=TRUE,
+                pamRespectsDendro=TRUE,
+                deepSplit=2,
+                minClusterSize =2
+            )
+        )
+    ),
+    samples.tree=NULL
+)
+```
+
+
+```{r}
+ViSEAGO::show_table(
+  clusters_wardD2, 
+  file = file.path("/home/data/refined/candescence/grace","comparison_go_manual_candescence.txt")
+)
+```
+
+```{r}
+
+go.compare.dotplot <- function(sel){
+  plot.dat <- list()
+  for (group in c("manual", "both", "candescence")){
+    plot.dat1 <- tb.list[[group]] %>%
+      dplyr::select(GO.cluster, IC, GO.ID, term, 
+                    size.manual, paste(sel, "manual..log10_pvalue", sep="_"))
+    colnames(plot.dat1)[5:6] <- c("size", "-log10(pvalue)")
+    plot.dat1$day <- "manual"
+
+    plot.dat2 <- tb.list[[group]] %>%
+      dplyr::select(GO.cluster, IC, GO.ID, term,
+                    size.candescence, paste(sel, "candescence..log10_pvalue", sep="_"))
+
+    plot.dat2$day <- "candescence"
+    colnames(plot.dat2)[5:6] <- c("size", "-log10(pvalue)")
+
+    
+    plot.dat[[group]] <- rbind(plot.dat1, plot.dat2)
+    plot.dat[[group]]$sigday <- group
+  }
+  
+  plot.dat.all <- rbind(plot.dat$manual, plot.dat$both, plot.dat$candescence)
+  
+  plot.dat.all$sigday <- factor(plot.dat.all$sigday, levels = c("manual", "both", "candescence"), ordered = TRUE)
+  level.order <- unique(plot.dat.all$term[order(plot.dat.all$GO.cluster)])
+  plot.dat.all$term <- factor(plot.dat.all$term, levels = level.order, ordered = TRUE)
+  plot.dat.all <- plot.dat.all[order(plot.dat.all$GO.cluster),]
+  
+  plot.dat.all$col <- as.character(lacroix_palette("PassionFruit", type = "continuous", n=16))[plot.dat.all$GO.cluster]
+  
+  return(plot.dat.all)
+}
+```
+
+```{r}
+tb <- read.table(file.path("/home/data/refined/candescence/grace","comparison_go_manual_candescence.txt"), sep="\t", header = TRUE)
+grep.size <- function(x){
+  frac <- unlist(lapply(strsplit(x, "\\("), "[", 2))
+  num.frac <- unlist(lapply(strsplit(frac, "/"), "[", 1))
+  num.frac <- as.numeric(num.frac)
+  return(num.frac)
+}
+tb$size.manual <- grep.size(tb$beta_manual.genes_frequency)
+tb$size.candescence <- grep.size(tb$beta_candescence.genes_frequency)
+tb.list <- list()
+tb.list$manual <- tb[tb$beta_manual.pvalue < 0.01 & tb$beta_candescence.pvalue > 0.01,] 
+tb.list$both <- tb[tb$beta_manual.pvalue < 0.01 & tb$beta_candescence.pvalue < 0.01,] 
+tb.list$candescence <- tb[tb$beta_manual.pvalue > 0.01 & tb$beta_candescence.pvalue < 0.01,] 
+
+plot.dat <- go.compare.dotplot(sel = "beta")
+```
+
+```{r}
+require(MetBrewer)
+
+pday3 <- ggplot(plot.dat, aes(x=reorder(stringr::str_wrap(term,80), rev(GO.cluster)), y=`-log10(pvalue)`, color = day, size = size)) +
+  geom_point() +
+  scale_color_manual(values = c(lacroix_palette("PassionFruit", type = "continuous", n=6)[4], met.brewer("Cross", 6)[3])) +
+  coord_flip() +
+  theme_light() +
+  ylim(0,10) +
+  facet_grid(GO.cluster~sigday, scales = "free", space='free_y') +
+   theme(axis.text.y= element_text(size =9),
+    panel.grid.major.x = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x=element_text(size=5, hjust=1.5) 
+  ) +
+  xlab("") +
+  ylab("-log10(weight01 p-value)")
+pday3
+ggsave(file.path("/home/data/refined/candescence/grace","manual_candescence_go.pdf"), pday3, width =9, height = 7)
+```
+
+
+

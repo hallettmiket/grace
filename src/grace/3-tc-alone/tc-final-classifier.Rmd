@@ -1,0 +1,366 @@
+---
+title: "Explore the TC FCOS classifier"
+output: html_notebook
+---
+
+```{r setup, include=FALSE, results='hide'}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn = -1)
+root <- rprojroot::find_root(".git/index"); 
+source(file.path(root, "src", "grace", "init.R"))
+library(ggrepel)
+```
+
+We begin by loading the metadata associatedd with the optimal clasifier as determined in experiment 1.
+
+```{r}
+GRACE <- "/home/data/refined/candescence/performance/grace_tc"
+numba = "chosenone"
+exp = "10" 
+threshold = 0.3
+important <- c("c0", "c1", "c2",  "c3")
+
+```
+
+```{r}
+# fnames <- list.files(GRACE, pattern = "test_events_results_*")
+# data <- lapply(fnames, FUN=function(x) { return( read_csv(file.path(GRACE, x)))}) %>% 
+#         bind_rows(.id = "column_label") 
+# data <- data[, -c(1,2)]
+# data <- data %>% select(-"index")
+```
+
+
+get out the coordinates and annotate tibble used info from each file
+```{r}
+# data$type<- "tc"
+# tmp_<- str_split(data$filename, pattern="_", simplify=TRUE)
+# data$replicate <-as.integer(str_split(tmp_[,3], pattern="[A-Z]+", simplify=TRUE)[,2])
+# data$plate <- as.integer(str_split(tmp_[,4], pattern="[A-Z]+", simplify=TRUE)[,2])
+# data$position<-tmp_[,5]
+# 
+# data <- data %>% separate( col=position, into=c("row", "column"), sep=1 )
+# 
+# data <- data %>% relocate(event, experiment, type, threshold, gt_class, dt_class, 
+#                              plate, row, column,replicate, bbox_1, bbox_2, bbox_3, bbox_4)
+# 
+# data <- data %>% mutate( area = (bbox_3 - bbox_1)*(bbox_4 - bbox_2))
+# print(data)
+# write_csv(data, file.path(GRACE,
+#                                   paste0("complete_test_events_",
+#                                   numba, "_thresh_", threshold, ".csv")))
+# saveRDS(data, file.path(GRACE, paste0("complete_test_events_",
+#                                   numba, "_thresh_", threshold, ".Rds")))
+# filename2prcr <- data %>% select(filename, plate, row, column, replicate) %>% distinct
+```
+
+
+
+
+We asked what the distribution of sizes is for each of the classes across all immages. 
+For the important classes, there are  significnt differences overall. 
+Specifically there is a slight increase in the avearge size with filementation.
+
+```{r}
+data <- readRDS(file.path(GRACE, paste0("complete_test_events_", 
+                                  numba, "_thresh_", threshold, ".Rds")))
+filename2prcr <- data %>% select(filename, plate, row, column, replicate) %>% distinct
+```
+
+
+For visualization, we create succinct names based on their gene names. First we set NA gene names to the feature name in grace. Then we join with the data table.
+```{r}
+grace$name <- ifelse(is.na(grace$common), grace$feature_name, grace$common)
+grace$name <- ifelse(is.na(grace$name), 
+                     ifelse(!is.na(grace$orf), paste0("control_", grace$orf), paste0("control_", grace$description)),
+                     grace$name)
+grace <- grace %>% relocate(name)
+grace_lite <- grace %>% select( name, plate, row, column )
+data_full <- data %>% left_join(grace_lite, by=c("plate", "row", "column")) %>% relocate(name) 
+data <- data_full
+
+```
+
+Now we perform some due diligence to make sure everything is ok.
+
+Question. Are there examples of objects in the data tibble from every row of grace (N=3,351)? Yes
+
+```{r}
+tmp_g <- grace_lite %>% select(plate, row, column) %>% distinct %>% arrange(plate, row, column)
+tmp_d <- data %>% select(plate, row, column) %>% distinct %>% arrange(plate, row, column)
+
+for (ii in 1:nrow(tmp_g)) {
+    xx <- tmp_d %>% filter(plate==tmp_g$plate[ii], row==tmp_g$row[ii], column==tmp_g$column[ii])
+    if (nrow(xx)==0) { print(as.character(tmp_g[ii,]))}
+
+}
+# empty
+```
+So every entry of grade is in the data tibble. Good.
+
+Question. Which coordinates (combinations of plate, row, column) are missing a replicate in the data tibble? No...
+
+```{r}
+tmp_d <- data %>% select(plate, row, column, replicate) %>% distinct %>% arrange(plate, row, column, replicate) %>%
+    group_by(plate, row, column) %>% summarize(n=n())
+tmp_dd <- tmp_d %>% filter( n < 2 )
+
+```
+So there are 99 instances where only one replicate is present. For example, plate 11 is missing all replicates. Plate 23 is also missing 3 replicates.
+
+Question. Are there images for these missing replicates in the test image directory? Or are they missing? 
+
+```{r}
+fs_test <- list.files("/home/data/refined/candescence/train-data/grace_tc/test")
+
+split_test <- tibble(.rows=length(fs_test))
+tmp_<- str_split(fs_test, pattern="_", simplify=TRUE)
+split_test$replicate <-as.integer(str_split(tmp_[,3], pattern="[A-Z]+", simplify=TRUE)[,2])
+split_test$plate <- as.integer(str_split(tmp_[,4], pattern="[A-Z]+", simplify=TRUE)[,2])
+split_test$position<-tmp_[,5]
+split_test <- split_test %>% separate( col=position, into=c("row", "column"), sep=1 ) %>% distinct %>% 
+    arrange(plate, row, column, replicate)
+
+for (ii in 1:nrow(tmp_dd)){
+    xx <- split_test %>% filter(plate==tmp_dd$plate[ii], row==tmp_dd$row[ii], column==tmp_dd$column[ii])
+    if (nrow(xx)==0) {
+        print( "\n Missing ", ii, " ", as.character(tmp_dd[ii, ]))
+    } else if (nrow(xx)==1) {
+        print("\n just one is here")
+        print(ii)
+    } else if (nrow(xx)==2) {
+      #  print("\n Both are here "); print( ii)
+    }
+}
+```
+All of them are missing the second replicate.
+
+Question. Are there any images in the data tibble that aren't in GRACE? Yes there are several in data and not in GRACE. 
+
+```{r}
+for (ii in 1:nrow(tmp_d)) {
+    xx <- tmp_g %>% filter(plate==tmp_d$plate[ii], row==tmp_d$row[ii], column==tmp_d$column[ii])
+    if (nrow(xx)==0) { print(as.character(tmp_d[ii,]))
+        }
+
+}
+```
+Yes there are and these are the same ones that are in tc but not GRACE.
+
+
+
+
+## Remove blacklisted from the data tibble
+
+```{r}
+data_white <- data %>% filter(!(plate=="20" & row=="F" & column=="10")) %>%
+             filter(!(plate=="35" & row=="H" & column %in% c("5", "6", "7", "8", "9", "10", "11", "12"))) %>%
+             filter(!(name %in% c("control_unknown", "control_YPD+NAT", "control_YPD", "control_ATCC90030", "control_WO1")))
+```
+
+```{r}
+saveRDS(data_white, file.path(GRACE, paste0("journal_version_before_summary_whitelisted_tc_", 
+                                  numba, "_thresh_", threshold, ".Rds")))
+```
+
+## Build summaries
+
+We next build summaries of each individual image. For this we will only consider the so-called
+``important'' classes.
+
+```{r}
+data_white <- data_white %>% ungroup
+img_summary <- data_white %>% filter(dt_class %in% important) %>%
+  group_by(filename, dt_class) %>% select(-c(threshold, type, gt_class)) %>% dplyr::summarise( n_objects_class = n() )
+                                                                                               
+tmp <- data_white %>% select(name, filename) %>% distinct
+img_summary <- img_summary %>% left_join(tmp, by="filename") %>% relocate(name)
+```
+
+```{r}
+#  dplyr::summarise( n=n(), A_mean = mean(area), A_med=median(area), A_min=min(area), A_max=max(area))
+img_summary <- img_summary %>% ungroup %>% group_by(filename) %>%
+    mutate(n_objects = sum(n_objects_class))
+
+img_summary<- img_summary %>%  relocate(name, dt_class, n_objects_class,n_objects)
+print(img_summary)
+```
+
+
+```{r}
+saveRDS(img_summary, file.path(GRACE, paste0("journal_version_summary_whitelisted_tc_", 
+                                  numba, "_thresh_", threshold, ".Rds")))
+```
+
+```{r}
+link_2_filename <- data_white %>% select(filename, plate, row, column, replicate) %>% distinct
+```
+
+
+Now we have to touch up the img_summary tibble to pivot wider and get the final version ready.
+
+```{r}
+img_summary_2 <- img_summary  %>% select(name, filename, n_objects, n_objects_class, dt_class ) %>%
+  pivot_wider(names_from=dt_class, values_from=n_objects_class) 
+img_summary_2 <- img_summary_2 %>% mutate( across(c(`c0`, `c1`,  `c2`, `c3`), replace_na, 0) ) 
+img_summary_2 <- img_summary_2 %>% 
+            rename(tc_a_0=`c0`, tc_a_1=`c1`, tc_a_2=`c2`, tc_a_3=`c3`) 
+
+img_summary_2 <- img_summary_2 %>%
+            mutate(n_objects=sum(tc_a_0, tc_a_1, tc_a_2, tc_a_3))
+# this is necessary to remove the UFOs from the counts.
+
+# now add relative frequencies
+img_summary_3 <- img_summary_2 %>%
+            mutate(
+                tc_f_0=tc_a_0/n_objects,
+                tc_f_1=tc_a_1/n_objects,
+                tc_f_2=tc_a_2/n_objects,
+                tc_f_3=tc_a_3/n_objects
+            )
+
+```
+
+
+```{r}
+img_summary_4 <- img_summary_3 %>% left_join(link_2_filename, by=c("filename") )
+img_summary_5 <- img_summary_4 %>% left_join(grace, by=c("plate", "row", "column"))
+img_summary_5 <- img_summary_5 %>% select(-name.y) %>% rename(name=`name.x`)
+img_summary_6 <- img_summary_5 %>% relocate( name, common, orf, plate, row, column, replicate, feature_name, description )
+img_summary_6 <- img_summary_6 %>% arrange(plate, row, column, replicate)
+```
+
+
+Clean up the rep1 macro and TC manual scores.
+```{r}
+img_summary_7 <- img_summary_6
+img_summary_7$macro_manual_score <- ifelse(img_summary_7$replicate==1, img_summary_7$rep1_macro, img_summary_7$rep2_macro)
+img_summary_7$tc_manual_score <- ifelse(img_summary_7$replicate==1, img_summary_7$rep1_TC, img_summary_7$rep2_TC)
+img_summary_7 <- img_summary_7 %>% relocate( name, common, orf, plate, row, column, replicate, macro_manual_score, tc_manual_score) 
+```
+
+
+```{r}
+saveRDS(img_summary_7, file.path(GRACE, paste0("journal_version_COMPLETE_tc_", 
+                                  numba, "_thresh_", threshold, ".Rds")) )
+
+```
+
+
+```{r}
+img_summary_7 <- img_summary_7 %>% ungroup
+tmp <- img_summary_7 %>% select(plate, row, column) %>% distinct
+```
+
+
+
+```{r}
+coords <- img_summary_7 %>% select(plate, row, column) %>% distinct
+img_summary_8_1 <- img_summary_7 %>% filter(replicate==1)
+img_summary_8_2 <- img_summary_7 %>% filter(replicate==2)
+
+coords_1 <- img_summary_8_1 %>% select(plate, row, column) %>% distinct
+coords_2 <- img_summary_8_2 %>% select(plate, row, column) %>% distinct
+```
+
+```{r}
+# are there any weird cases where replicate #2 is present but not replicate #1? Yes, 253, 1653, ... 
+for (ii in 1:nrow(coords_2)) {
+    xx <- coords_1 %>%  filter(plate==coords_2$plate[ii], row==coords_2$row[ii], column==coords_2$column[ii])
+    if (nrow(xx)==0) {
+        print(ii)
+    }
+}
+```
+
+
+```{r}
+strain_summary <- img_summary_8_1 %>% filter(FALSE)
+strain_summary$tc_manual_non_fil <- NA
+strain_summary$tc_ave_n_objects <- NA
+strain_summary$tc_tot_n_objects <- NA
+strain_summary$tc_ave_non_fil_freq <- NA
+strain_summary$tc_manual_gde <- FALSE
+
+for (ii in 1:nrow(coords)) {
+    xx_1 <- img_summary_8_1 %>% filter(plate==coords$plate[ii], row==coords$row[ii], column==coords$column[ii])
+    xx_2 <- img_summary_8_2 %>% filter(plate==coords$plate[ii], row==coords$row[ii], column==coords$column[ii])
+    
+    if (nrow(xx_1)==0) {  # xx_2 must be > 0
+         xx <- xx_2;  xx$tc_manual_non_fil <- NA; xx$tc_ave_n_objects <- NA; xx$tc_ave_non_fil_freq <- NA
+         xx$tc_tot_n_objects <- NA; xx$tc_manual_gde <- FALSE
+         
+         if ((!is.na(xx_2$tc_manual_score)) & (xx_2$tc_manual_score %in% c("E", "GD"))) {
+             xx$tc_manual_gde <- TRUE
+         }
+         
+         xx$tc_manual_non_fil[1] <- ifelse((!is.na(xx_2$tc_manual_score[1]) & 
+                                                     xx_2$tc_manual_score[1] %in% c("0", "1")), TRUE, FALSE)
+         if ((is.na(xx$n_objects[1])) | (xx$n_objects[1]==0)) {
+             xx$tc_ave_n_objects[1] <- xx$tc_tot_n_objects[1] <- 0
+             xx$tc_ave_non_fil_freq[1] <- 0
+         } else { 
+             tot_non_fil <- sum(xx$tc_a_0[1], xx$tc_a_1[1], na.rm=TRUE)
+             tot_fil <- sum(xx$tc_a_2[1], xx$tc_a_3[1], na.rm=TRUE)
+             xx$tc_ave_n_objects[1] <- xx$tc_tot_n_objects[1] <- xx$n_objects[1] 
+             xx$tc_ave_non_fil_freq[1] <- tot_non_fil/(tot_non_fil + tot_fil)
+             }
+    } else if (nrow(xx_2)==0) {
+         xx <- xx_1;         xx$tc_manual_non_fil<- NA; xx$tc_ave_n_objects <- NA; 
+         xx$tc_tot_n_objects <- NA;  xx$tc_ave_non_fil_freq <- NA; xx$tc_manual_gde <- FALSE
+
+         if ((!is.na(xx_1$tc_manual_score)) & (xx_1$tc_manual_score %in% c("E", "GD"))) {
+             xx$tc_manual_gde <- TRUE
+         }
+        
+         xx$tc_manual_non_fil[1] <- ifelse((!is.na(xx_1$tc_manual_score[1]) & 
+                                                     xx_1$tc_manual_score[1] %in% c("0", "1")), TRUE, FALSE)
+         if ((is.na(xx$n_objects[1])) | (xx$n_objects[1]==0)) {
+             xx$tc_ave_n_objects[1] <- xx$tc_tot_n_objects[1] <- 0
+             xx$tc_ave_non_fil_freq[1] <- 0
+         } else { 
+             tot_non_fil <- sum(xx$tc_a_0[1], xx$tc_a_1[1], na.rm=TRUE)
+             tot_fil <- sum(xx$tc_a_2[1], xx$tc_a_3[1], na.rm=TRUE)
+             xx$tc_ave_n_objects[1] <- xx$tc_tot_n_objects[1] <- xx$n_objects[1] 
+             xx$tc_ave_non_fil_freq[1] <- tot_non_fil/(tot_non_fil + tot_fil)
+             }
+    } else {
+        xx <- xx_1
+        xx$tc_manual_non_fil <- NA; xx$tc_ave_n_objects <- xx$tc_tot_n_objects <- NA;  xx$tc_ave_non_fil_freq <- NA
+        xx$tc_manual_gde <- FALSE
+        
+        if ((!is.na(xx_1$tc_manual_score)) & (!is.na(xx_2$tc_manual_score)) & 
+            (xx_1$tc_manual_score %in% c("E", "GD")) &  (xx_2$tc_manual_score %in% c("E", "GD")) ){
+             xx$tc_manual_gde <- TRUE
+         }
+        
+        xx$tc_manual_non_fil[1] <- ifelse(((!is.na(xx_1$tc_manual_score[1])) & (!is.na(xx_2$tc_manual_score[1])) &
+                                                     xx_1$tc_manual_score[1] %in% c("0", "1") &
+                                                     xx_2$tc_manual_score[1] %in% c("0", "1")), 
+                                                TRUE, FALSE)
+        tmp1 <- ifelse(is.na(xx_1$n_objects[1]), 0, xx_1$n_objects[1] )
+        tmp2 <- ifelse(is.na(xx_2$n_objects[1]), 0, xx_2$n_objects[1] )
+        xx$tc_ave_n_objects[1] <- (tmp1+tmp2)/2
+        xx$tc_tot_n_objects[1] <- tmp1 + tmp2
+        if (xx$tc_ave_n_objects[1]==0) { xx$tc_ave_non_fil_freq[1] <- 0 
+        } else {
+            xx$tc_ave_non_fil_freq[1] <- sum(xx_1$tc_a_0[1], xx_1$tc_a_1[1], 
+                                      xx_2$tc_a_0[1], xx_2$tc_a_1[1],na.rm=TRUE) / sum(
+                                            xx_1$tc_a_0[1], xx_1$tc_a_1[1], xx_1$tc_a_2[1], xx_1$tc_a_3[1],
+                                            xx_2$tc_a_0[1], xx_2$tc_a_1[1], xx_2$tc_a_2[1], xx_2$tc_a_3[1],
+                                            na.rm=TRUE
+                                      )
+        }
+    }
+    strain_summary <- strain_summary %>% add_row(xx)
+}
+strain_summary <- strain_summary %>% relocate(name, common, orf, plate, row, column, tc_manual_non_fil, tc_ave_n_objects, tc_tot_n_objects, tc_ave_non_fil_freq) %>%
+        select(-replicate, -filename, -tc_manual_score, -n_objects)
+```
+
+
+```{r}
+saveRDS(strain_summary, file.path(GRACE, paste0("journal_version_STRAIN_COMPLETE_tc_", 
+                                  numba, "_thresh_", threshold, ".Rds")) )
+
+```

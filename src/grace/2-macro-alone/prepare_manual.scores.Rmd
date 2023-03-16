@@ -1,0 +1,37 @@
+---
+title: "prepare_manual_scores"
+output: html_document
+---
+---
+title: "Explore the Macrophage FCOS classifier"
+output: html_notebook
+---
+
+```{r setup, include=FALSE, results='hide'}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn = -1)
+root <- rprojroot::find_root(".git/index"); 
+source(file.path(root, "src", "grace", "init.R"))
+library(ggrepel)
+```
+
+We begin by loading the metadata associatedd with the optimal clasifier as determined in experiment 1.
+
+```{r}
+GRACE_MAIN <- "/home/data/refined/candescence/grace"
+numba = "biglittlelittle"
+exp = "biglittlelittle" 
+threshold = 0.2
+important <- c("0", "1", "2", "3", "UFO", "macrophage")
+```
+
+```{r}
+scores <- read_csv(file.path(GRACE_MAIN, "grace_tc_macro_manual_scores.csv"))
+scores$plate <- scores$Plate %>% str_remove( "Plate ") %>% as.integer
+scores$row <- scores$Position %>% str_split("") %>% lapply(FUN=function(x) return(x[[1]])) %>% unlist
+scores$column <- scores$Position %>% str_split("") %>% lapply(FUN=function(x) return(str_c(x[[2]], x[[3]]))) %>% unlist
+```
+
+```{r}
+to_save <- scores %>% select()
+```

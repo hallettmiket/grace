@@ -1,0 +1,401 @@
+---
+title: "The final predictor"
+output:
+  html_notebook: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, results='hide'}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn = -1)
+root <- rprojroot::find_root(".git/index"); 
+source(file.path(root, "src", "grace", "init.R"))
+library(ggrepel)
+GRACE <- "/home/data/refined/candescence/grace"
+```
+
+```{r}
+GRACE_TC <- "/home/data/refined/candescence/performance/grace_tc"
+tc_numba = "chosenone"
+tc_exp = "10" 
+tc_threshold = 0.3
+tc_important <- c("c0", "c1", "c2",  "c3")
+```
+
+```{r}
+GRACE_MACRO <- "/home/data/refined/candescence/performance/grace_macro"
+macro_numba = "biglittlelittle"
+macro_exp = "biglittlelittle" 
+macro_threshold = 0.2
+macro_important <- c("0", "1", "2", "3", "UFO", "macrophage")
+```
+```{r}
+nikki_final <- c(
+"orf19.2690","orf19.7459","orf19.3367","orf19.2418","orf19.1720",
+"orf19.536","orf19.6738","orf19.3642","orf19.2275","orf19.7019","orf19.688",
+"orf19.7615","orf19.3247","orf19.3348","orf19.2055","orf19.2019","orf19.498",
+"orf19.4497","orf19.6385","orf19.1936","orf19.1545","orf19.4233","orf19.7486",
+"orf19.5064","orf19.4016","orf19.3532","orf19.7383","orf19.3527","orf19.1471",
+"orf19.2785","orf19.7001","orf19.6812","orf19.6752","orf19.3350","orf19.1826",
+"orf19.397","orf19.828","orf19.4204","orf19.2520","orf19.1662","orf19.6129",
+"orf19.5219","orf19.1967","orf19.1232","orf19.2706","orf19.4176","orf19.6035",
+"orf19.4929","orf19.1949","orf19.3064","orf19.7335","orf19.239", "orf19.4967",
+"orf19.930","orf19.5747", "orf19.2438","orf19.4519","orf19.2622", "orf19.863", 
+"orf19.2852","orf19.3480","orf19.3777","orf19.5161","orf19.1981","orf19.5768")
+```
+
+```{r}
+strain_summary_macro <- readRDS(file.path(GRACE, paste0("journal_version_STRAIN_COMPLETE_macro_", 
+                                  macro_numba, "_thresh_", macro_threshold, ".Rds")))
+strain_summary_tc <- readRDS(file.path(GRACE_TC, paste0("journal_version_STRAIN_COMPLETE_tc_", 
+                                  tc_numba, "_thresh_", tc_threshold, ".Rds")))
+```
+
+Select from both just the essential columns.
+```{r}
+tmp_macro <- strain_summary_macro[c(1:10, 12:23, 28:ncol(strain_summary_macro))]
+tmp_tc <- strain_summary_tc[c(4:10, 14:21, 55)]
+combined <- tmp_macro %>% full_join(tmp_tc, by=c("plate", "row", "column"))
+combined_2 <- combined %>% mutate(log_freq_ratio= log((1-tc_ave_non_fil_freq)/(1-macro_ave_non_fil_freq)))
+combined_3 <- combined_2 %>% mutate(ave_n_objects=sqrt(tc_ave_n_objects * macro_ave_n_objects))
+combined_4 <- combined_3 %>% relocate("name", "common", "orf", "plate", "row", "column",
+                                 "feature_name",         "description", 
+                                 "log_freq_ratio", "ave_n_objects",
+                                 "macro_manual_non_fil",                    "macro_ave_n_objects",
+                                 "macro_tot_n_objects" ,                    "macro_ave_non_fil_freq",
+                                  "macro_manual_gde",      
+                                 "tc_manual_non_fil", "tc_ave_n_objects" ,                       "tc_tot_n_objects" ,   
+                                 "tc_ave_non_fil_freq", "tc_manual_gde",
+                                 "tc_a_0", "tc_a_1", "tc_a_2",  "tc_a_3"  ,
+                                  "tc_f_0", "tc_f_1" , "tc_f_2"  , "tc_f_3" ,
+                                 "macro_a_0" ,                              "macro_a_1"   ,
+                                 "macro_a_2", "macro_a_3",      "macro_a_uninfected"    ,
+                                 "macro_f_0",  "macro_f_1",                               "macro_f_2",
+                                 "macro_f_3"    ,                           "macro_f_uninfected"  ,
+                                 "color"
+                                 )
+combined_5 <- combined_4; combined_5$color_final <- as.character(combined_5$color)
+combined_5$color_final <- ifelse(combined_5$color_final=="manual_hit", "", combined_5$color_final)
+combined_5$color_final[match(nikki_final, combined_4$orf)] <- "manual_hit"
+combined_5$color_final <- as.factor(combined_5$color_final)
+```
+
+
+```{r}
+saveRDS(combined_5, file.path(GRACE, paste0("journal_version_COMPLETE_COMBINED.Rds")) )
+
+```
+
+Calculate vertical line as right boudning the top  5% of fraction non-filamentous.
+
+```{r}
+good <- combined_5 %>% filter(!(macro_manual_gde & tc_manual_gde))
+qh <- quantile(good$log_freq_ratio, 0.90, na.rm=TRUE) %>% unname
+
+```
+
+Calculate horizontal line as upperbounding 95% of growth defects.
+
+```{r}
+gds <- combined_5 %>% filter(macro_manual_gde | tc_manual_gde)
+qv <- quantile(gds$ave_n_objects, 0.95, na.rm=TRUE) %>% unname
+
+```
+
+```{r}
+sz <- combined_5 %>% filter(!(macro_manual_gde & tc_manual_gde))
+qs <- quantile(sz$ave_n_objects, 0.20, na.rm=TRUE) %>% unname
+```
+
+This is used to generate Figure 2B.
+```{r}
+scatter_dist <- ggplot(combined_5, 
+        aes(x=log_freq_ratio, y=ave_n_objects, color=color_final)) + 
+  geom_point( size=0.2) +
+  geom_hline(yintercept=qv)  + 
+ #   geom_hline(yintercept=qs, linetype = "dotted", color="grey")  + 
+  scale_color_manual(values=c("wildtype"="blue", "manual_hit"="red", "x"="lightgrey", "control"="black", "growth_defect"="purple")) +
+  geom_vline(xintercept=qh) +
+    # theme_minimal() +
+    theme(axis.line = element_line(colour = "black"),
+    axis.title.x = element_text(size = 8),
+    axis.title.y = element_text(size = 8),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())  +
+  # scale_color_gradient2(midpoint=0, low="blue", mid="white",
+  #                    high="red", space ="Lab", limits = c(min(no_E$dist),2) ) +
+  labs(
+       x="log-ratio of filamentation freq. in TC versus filamentation freq.in M Phi", y = "Geometric average number of cells in images")
+
+
+pdf(
+        file.path(
+                GRACE, paste0("journal_version_FIGURE_2B.pdf")
+            ),
+        height = 4,
+        width = 6
+        )
+    scatter_dist
+dev.off()
+
+```
+
+
+
+List Candescence hits. This is used to generate Table 1A.
+
+```{r}
+candi_hits_final <- combined_5 %>% filter(log_freq_ratio > qh, ave_n_objects > qv, !(color_final=="manual_hit") )
+write_csv(candi_hits, file.path( GRACE, "journal_version_TABLE_1C_CANDI_HITS.csv"))
+
+candi_nikki_hits_final <- combined_5 %>% filter(log_freq_ratio > qh, ave_n_objects > qv, color_final=="manual_hit")
+write_csv(candi_nikki_hits, file.path( GRACE, "journal_version_TABLE_1C_CANDI_NIKKI_HITS.csv"))
+
+nikki_hits_final <- combined_5 %>% filter((color_final=="manual_hit") & (log_freq_ratio <= qh | ave_n_objects <= qv))
+write_csv(nikki_hits, file.path( GRACE, "journal_version_TABLE_1C_NIKKI_HITS.csv"))
+
+```
+
+
+
+
+Now generate the Venn diagram of Figure 2C.
+
+```{r}
+library(ggvenn)
+AA <- list( Candescence = union(candi_hits_final$orf, candi_nikki_hits_final$orf),
+            Manual = union(nikki_hits_final$orf, candi_nikki_hits_final$orf) )
+
+
+pdf(
+        file.path(
+                GRACE, paste0("journal_version_FIGURE_2C.pdf")
+            ),
+        height = 4,
+        width = 6
+        )
+    ggvenn(AA, show_elements=FALSE, columns=c("Candescence", "Manual"), fill_color=c("blue", "green"), stroke_color="white", stroke_alpha=0.1)
+
+dev.off()
+
+```
+
+
+Now we do some GO analyses.
+
+```{r}
+nikki_hits <- add_row(nikki_hits_final, candi_nikki_hits_final)
+candi_hits <- add_row(candi_hits_final, candi_nikki_hits_final)
+```
+
+```{r}
+genesl <- list( unique(nikki_hits$name), unique(candi_hits$name) )
+names(genesl) <- c("Manual", "Candescence")
+bckg <- strain_summary$name
+
+```
+
+```{r setup, include=FALSE, results='hide'}
+library(here)
+set.seed(321)
+library(ViSEAGO)
+library(ggplot2)
+library(LaCroixColoR)
+#scvi.pth <- here("data", "data03-scvi")
+#source(here("src", "utils.R"))
+```
+
+```{r}
+Custom<-ViSEAGO::Custom2GO(file.path("/home/data/refined/candescence/grace","ca.goa.txt"))
+myGENE2GO<-ViSEAGO::annotate(
+    "237561",
+    Custom
+)
+```
+
+```{r}
+goterms <- lapply(genesl, function(x){
+  BP.markers<-ViSEAGO::create_topGOdata(
+    geneSel = x, 
+    allGenes = bckg,
+    gene2GO=myGENE2GO, 
+    ont="BP",
+    nodeSize=5
+  )
+  
+  weight01.BP.markers<-topGO::runTest(
+      BP.markers,
+      statistic = "fisher"
+  )
+  return(list(bp=BP.markers, weight01.bp = weight01.BP.markers))
+})
+```
+
+
+```{r}
+manual_bp <- goterms$Manual$bp
+manual_weight <- goterms$Manual$weight01.bp
+candescence_bp <- goterms$Candescence$bp
+candescence_weight <- goterms$Candescence$weight01.bp
+
+BP_sResults<-ViSEAGO::merge_enrich_terms(
+    cutoff=0.01,
+    Input=list(
+      beta_manual=c(
+        "manual_bp",
+        "manual_weight"
+        ),
+      beta_candescence=c(
+          "candescence_bp",
+          "candescence_weight"
+        )
+    )
+)
+```
+
+```{r}
+myGOs<-ViSEAGO::build_GO_SS(
+    gene2GO=myGENE2GO,
+    enrich_GO_terms=BP_sResults
+)
+```
+
+```{r}
+myGOs<-ViSEAGO::compute_SS_distances(
+    myGOs,
+    distance="Wang"
+)
+```
+```{r}
+clusters_wardD2<-ViSEAGO::GOterms_heatmap(
+    myGOs,
+    showIC=FALSE,
+    showGOlabels =TRUE,
+    heatmap_colors = c("#FFFFFF","#56154D"),
+    GO.tree=list(
+        tree=list(
+            distance="Wang",
+            aggreg.method="ward.D2"
+        ),
+        cut=list(
+            dynamic=list(
+                pamStage=TRUE,
+                pamRespectsDendro=TRUE,
+                deepSplit=2,
+                minClusterSize =2
+            )
+        )
+    ),
+    samples.tree=NULL
+)
+```
+
+
+```{r}
+ViSEAGO::show_table(
+  clusters_wardD2, 
+  file = file.path("/home/data/refined/candescence/grace","comparison_go_manual_candescence_final.txt")
+)
+```
+
+```{r}
+
+go.compare.dotplot <- function(sel){
+  plot.dat <- list()
+  for (group in c("manual", "both", "candescence")){
+    plot.dat1 <- tb.list[[group]] %>%
+      dplyr::select(GO.cluster, IC, GO.ID, term, 
+                    size.manual, paste(sel, "manual..log10_pvalue", sep="_"))
+    colnames(plot.dat1)[5:6] <- c("size", "-log10(pvalue)")
+    plot.dat1$day <- "manual"
+
+    plot.dat2 <- tb.list[[group]] %>%
+      dplyr::select(GO.cluster, IC, GO.ID, term,
+                    size.candescence, paste(sel, "candescence..log10_pvalue", sep="_"))
+
+    plot.dat2$day <- "candescence"
+    colnames(plot.dat2)[5:6] <- c("size", "-log10(pvalue)")
+
+    
+    plot.dat[[group]] <- rbind(plot.dat1, plot.dat2)
+    plot.dat[[group]]$sigday <- group
+  }
+  
+  plot.dat.all <- rbind(plot.dat$manual, plot.dat$both, plot.dat$candescence)
+  
+  plot.dat.all$sigday <- factor(plot.dat.all$sigday, levels = c("manual", "both", "candescence"), ordered = TRUE)
+  level.order <- unique(plot.dat.all$term[order(plot.dat.all$GO.cluster)])
+  plot.dat.all$term <- factor(plot.dat.all$term, levels = level.order, ordered = TRUE)
+  plot.dat.all <- plot.dat.all[order(plot.dat.all$GO.cluster),]
+  
+  plot.dat.all$col <- as.character(lacroix_palette("PassionFruit", type = "continuous", n=16))[plot.dat.all$GO.cluster]
+  
+  return(plot.dat.all)
+}
+```
+
+```{r}
+tb <- read.table(file.path("/home/data/refined/candescence/grace","comparison_go_manual_candescence_final.txt"), sep="\t", header = TRUE)
+grep.size <- function(x){
+  frac <- unlist(lapply(strsplit(x, "\\("), "[", 2))
+  num.frac <- unlist(lapply(strsplit(frac, "/"), "[", 1))
+  num.frac <- as.numeric(num.frac)
+  return(num.frac)
+}
+tb$size.manual <- grep.size(tb$beta_manual.genes_frequency)
+tb$size.candescence <- grep.size(tb$beta_candescence.genes_frequency)
+tb.list <- list()
+tb.list$manual <- tb[tb$beta_manual.pvalue < 0.05 & tb$beta_candescence.pvalue > 0.05,] 
+tb.list$both <- tb[tb$beta_manual.pvalue < 0.05 & tb$beta_candescence.pvalue < 0.05,] 
+tb.list$candescence <- tb[tb$beta_manual.pvalue > 0.05 & tb$beta_candescence.pvalue < 0.05,] 
+
+plot.dat <- go.compare.dotplot(sel = "beta")
+```
+
+```{r}
+require(MetBrewer)
+
+pday3 <- ggplot(plot.dat, aes(x=reorder(stringr::str_wrap(term,80), rev(GO.cluster)), y=`-log10(pvalue)`, color = day, size = size)) +
+  geom_point() +
+  scale_color_manual(values = c(lacroix_palette("PassionFruit", type = "continuous", n=6)[4], met.brewer("Cross", 6)[3])) +
+  coord_flip() +
+  theme_light() +
+  ylim(0,10) +
+  facet_grid(GO.cluster~sigday, scales = "free", space='free_y') +
+   theme(axis.text.y= element_text(size =9),
+    panel.grid.major.x = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x=element_text(size=5, hjust=1.5) 
+  ) +
+  xlab("") +
+  ylab("-log10(weight01 p-value)")
+pday3
+ggsave(file.path("/home/data/refined/candescence/grace","Figure_2D.pdf"), pday3, width =9, height = 7)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
