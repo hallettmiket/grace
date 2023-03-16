@@ -1,4 +1,4 @@
-#    python ~/repo/candescence/src/grace/configs/grace_macro/experiments/experiment_1.py 
+#    python ~/repo/grace/src/grace/configs/grace_macro/experiments/experiment_1.py 
 #from subprocess import Popen
 import os
 import sys
@@ -16,7 +16,7 @@ pretrained=False
 if freeze==-1:
     freeze="m1"
 
-PATH_REPO="/home/hallett/repo/candescence/"
+PATH_REPO="/home/hallett/repo/grace/"
 PATH_EXPERIMENTS=PATH_REPO+"src/grace/configs/grace_macro/experiments"
 PATH_CONFIGS=PATH_REPO+"src/grace/configs/grace_macro/"
 LOAD_FROM="'/home/data/refined/candescence/production/models/candescence_version_1.0/model.pth'"

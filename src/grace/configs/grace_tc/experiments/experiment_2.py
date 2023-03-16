@@ -1,4 +1,4 @@
-#    python ~/repo/candescence/src/grace/configs/grace_tc/experiments/experiment_0.py 
+#    python ~/repo/grace/src/grace/configs/grace_tc/experiments/experiment_0.py 
 #from subprocess import Popen
 import os
 import sys
@@ -13,7 +13,7 @@ freeze = 1
 load=True
 pretrained=False
 
-PATH_REPO="/home/hallett/repo/candescence/"
+PATH_REPO="/home/hallett/repo/grace/"
 PATH_EXPERIMENTS=PATH_REPO+"src/grace/configs/grace_tc/experiments"
 PATH_CONFIGS=PATH_REPO+"src/grace/configs/grace_tc/"
 LOAD_FROM="'/home/data/refined/candescence/production/models/candescence_version_1.0/model.pth'"
