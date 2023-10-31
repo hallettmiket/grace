@@ -1,27 +1,27 @@
-#    python ~/repo/candescence/src/grace/configs/grace_macro/experiments/experiment_1.py 
+#    python ~/repo/candescence/src/grace/configs/grace_tc/experiments/experiment_0.py 
 #from subprocess import Popen
 import os
 import sys
 
-exp = "1" # experiment number
-gpu = "1"
-lr = "0.001"
+exp = "4"  # experiment number
+gpu = "4"
+lr = "0.01"
 momentum = "0.9"
 decay = "0.001"
 total_epochs=3000
-freeze = 0 
+freeze = -1
 load=True
 pretrained=False
 
 if freeze==-1:
-    freeze="m1"
+        freeze="m1"
 
 PATH_REPO="/home/hallett/repo/candescence/"
-PATH_EXPERIMENTS=PATH_REPO+"src/grace/configs/grace_macro/experiments"
-PATH_CONFIGS=PATH_REPO+"src/grace/configs/grace_macro/"
+PATH_EXPERIMENTS=PATH_REPO+"src/grace/configs/grace_tc/experiments"
+PATH_CONFIGS=PATH_REPO+"src/grace/configs/grace_tc/"
 LOAD_FROM="'/home/data/refined/candescence/production/models/candescence_version_1.0/model.pth'"
 MMDETECTION="python /home/data/analysis-tools/mmdetection/tools/train.py "
-OUTPUT_FOLDER="/home/data/refined/candescence/output/grace_macro/exp_" + exp 
+OUTPUT_FOLDER="/home/data/refined/candescence/output/grace_tc/exp_" + exp 
 
 cfg_file = PATH_CONFIGS + "parameters_" + exp + ".py"
 f = open(cfg_file, "w+")

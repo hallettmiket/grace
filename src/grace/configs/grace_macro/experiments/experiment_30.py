@@ -1,15 +1,15 @@
-#    python ~/repo/candescence/src/grace/configs/grace_macro/experiments/experiment_1.py 
+#    python ~/repo/candescence/src/grace/configs/grace_macro/experiments/experiment_0.py 
 #from subprocess import Popen
 import os
 import sys
 
-exp = "1" # experiment number
-gpu = "1"
-lr = "0.001"
+exp = "30" # experiment number
+gpu = "3"
+lr = "0.01"
 momentum = "0.9"
-decay = "0.001"
+decay = "0.0001"
 total_epochs=3000
-freeze = 0 
+freeze = 1 
 load=True
 pretrained=False
 

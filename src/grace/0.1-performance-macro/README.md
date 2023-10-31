@@ -13,6 +13,9 @@ It is necessary however to use this Evaluator class that is found in this folder
 
 IN generate_test_objects.py, the OUTPUT variable should be set to point to the directory that contains the output from running the configs of src/curriculum for your experiment.
 
+The VARASANA dataset is  the location of the parent directory you downloaded from  
+  http://csfg-algonquin.concordia.ca/~hallett/candescence/varasana/
+from the temporary location of the Varasana files.
 
 numba is used as a tag for all output files. 
 thresh is the lower bound for labelling a bounding box.

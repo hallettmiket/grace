@@ -3,9 +3,9 @@
 import os
 import sys
 
-exp = "1" # experiment number
-gpu = "1"
-lr = "0.001"
+exp = "25" # experiment number
+gpu = "7"
+lr = "0.01"
 momentum = "0.9"
 decay = "0.001"
 total_epochs=3000

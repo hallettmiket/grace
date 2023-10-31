@@ -3,10 +3,10 @@
 import os
 import sys
 
-exp = "1" # experiment number
+exp = "19" # experiment number
 gpu = "1"
-lr = "0.001"
-momentum = "0.9"
+lr = "0.01"
+momentum = "0.99"
 decay = "0.001"
 total_epochs=3000
 freeze = 0 
